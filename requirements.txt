@@ -1,0 +1,8 @@
+gradio
+ultralytics
+scikit-learn
+scikit-image
+pillow
+numpy
+joblib
+requests
