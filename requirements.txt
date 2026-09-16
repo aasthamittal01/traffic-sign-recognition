@@ -1,4 +1,4 @@
-gradio
+streamlit
 ultralytics
 scikit-learn
 scikit-image
