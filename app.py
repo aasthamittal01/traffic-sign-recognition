@@ -2,11 +2,21 @@ import os
 import requests
 import joblib
 import numpy as np
-import gradio as gr
-
+import streamlit as st
 from PIL import Image
 from skimage.feature import hog
 from ultralytics import YOLO
+
+
+# ============================================================
+# PAGE CONFIGURATION
+# ============================================================
+
+st.set_page_config(
+    page_title="Traffic Sign Recognition & Driver Assistance",
+    page_icon="🚦",
+    layout="wide"
+)
 
 
 # ============================================================
@@ -16,50 +26,56 @@ from ultralytics import YOLO
 YOLO_MODEL_PATH = "traffic_sign_detector.pt"
 SVM_MODEL_PATH = "traffic_sign_final_model.pkl"
 
+YOLO_MODEL_URL = (
+    "https://github.com/aasthamittal01/"
+    "traffic-sign-recognition/releases/download/v1.0/"
+    "traffic_sign_detector.pt"
+)
+
+SVM_MODEL_URL = (
+    "https://github.com/aasthamittal01/"
+    "traffic-sign-recognition/releases/download/v1.0/"
+    "traffic_sign_final_model.pkl"
+)
+
 
 # ============================================================
-# DOWNLOAD LARGE YOLO MODEL IF NEEDED
+# DOWNLOAD MODEL
 # ============================================================
 
 def download_file(url, path):
-    response = requests.get(url, stream=True)
+    response = requests.get(url, stream=True, timeout=300)
     response.raise_for_status()
 
-    with open(path, "wb") as f:
+    with open(path, "wb") as file:
         for chunk in response.iter_content(chunk_size=8192):
             if chunk:
-                f.write(chunk)
-
-
-# Later we will put the real hosted model URL here.
-YOLO_MODEL_URL = os.getenv("YOLO_MODEL_URL")
-
-if not os.path.exists(YOLO_MODEL_PATH):
-    if not YOLO_MODEL_URL:
-        raise RuntimeError(
-            "YOLO model is missing. Set the YOLO_MODEL_URL environment variable."
-        )
-
-    print("Downloading YOLO model...")
-    download_file(YOLO_MODEL_URL, YOLO_MODEL_PATH)
-    print("YOLO model downloaded.")
+                file.write(chunk)
 
 
 # ============================================================
-# LOAD TRAINED MODELS
+# LOAD MODELS
 # ============================================================
 
-print("Loading YOLO model...")
-yolo_model = YOLO(YOLO_MODEL_PATH)
+@st.cache_resource
+def load_models():
 
-print("Loading SVM model...")
-svm_model = joblib.load(SVM_MODEL_PATH)
+    if not os.path.exists(YOLO_MODEL_PATH):
+        with st.spinner("Downloading YOLO11n model..."):
+            download_file(YOLO_MODEL_URL, YOLO_MODEL_PATH)
 
-print("Models loaded successfully.")
+    if not os.path.exists(SVM_MODEL_PATH):
+        with st.spinner("Downloading SVM model..."):
+            download_file(SVM_MODEL_URL, SVM_MODEL_PATH)
+
+    yolo_model = YOLO(YOLO_MODEL_PATH)
+    svm_model = joblib.load(SVM_MODEL_PATH)
+
+    return yolo_model, svm_model
 
 
 # ============================================================
-# GTSRB 43 SIGN NAMES
+# GTSRB SIGN NAMES
 # ============================================================
 
 SIGN_NAMES = {
@@ -124,18 +140,16 @@ def get_category(sign_name):
     ):
         return "Regulatory / Prohibitory"
 
-    if (
-        sign_name in [
-            "Turn right ahead",
-            "Turn left ahead",
-            "Ahead only",
-            "Go straight or right",
-            "Go straight or left",
-            "Keep right",
-            "Keep left",
-            "Roundabout mandatory"
-        ]
-    ):
+    if sign_name in [
+        "Turn right ahead",
+        "Turn left ahead",
+        "Ahead only",
+        "Go straight or right",
+        "Go straight or left",
+        "Keep right",
+        "Keep left",
+        "Roundabout mandatory"
+    ]:
         return "Mandatory"
 
     if sign_name in [
@@ -145,24 +159,22 @@ def get_category(sign_name):
     ]:
         return "Priority"
 
-    if (
-        sign_name in [
-            "General caution",
-            "Dangerous curve left",
-            "Dangerous curve right",
-            "Double curve",
-            "Bumpy road",
-            "Slippery road",
-            "Road narrows on the right",
-            "Road work",
-            "Traffic signals",
-            "Pedestrians",
-            "Children crossing",
-            "Bicycles crossing",
-            "Beware of ice/snow",
-            "Wild animals crossing"
-        ]
-    ):
+    if sign_name in [
+        "General caution",
+        "Dangerous curve left",
+        "Dangerous curve right",
+        "Double curve",
+        "Bumpy road",
+        "Slippery road",
+        "Road narrows on the right",
+        "Road work",
+        "Traffic signals",
+        "Pedestrians",
+        "Children crossing",
+        "Bicycles crossing",
+        "Beware of ice/snow",
+        "Wild animals crossing"
+    ]:
         return "Warning"
 
     if "End of" in sign_name:
@@ -281,10 +293,10 @@ def extract_hog_features(image):
 
 
 # ============================================================
-# RECOGNIZE ONE DETECTED SIGN
+# SVM RECOGNITION
 # ============================================================
 
-def recognize_crop(crop):
+def recognize_crop(crop, svm_model):
 
     features = extract_hog_features(crop)
 
@@ -303,13 +315,13 @@ def recognize_crop(crop):
 
 
 # ============================================================
-# FINAL ROAD-SCENE ANALYSIS
+# ROAD IMAGE ANALYSIS
 # ============================================================
 
-def analyze_road_image(image):
+def analyze_road_image(image, yolo_model, svm_model):
 
     if image is None:
-        return "Please upload a road image."
+        return None, []
 
     image = image.convert("RGB")
 
@@ -317,16 +329,16 @@ def analyze_road_image(image):
 
     height, width = image_array.shape[:2]
 
-    # --------------------------------------------------------
-    # YOLO DETECTION
-    # --------------------------------------------------------
-
+    # YOLO detects traffic sign locations
     results = yolo_model(
         image_array,
         conf=0.25
     )
 
     detections = []
+
+    # Draw detections on image
+    annotated_image = image.copy()
 
     for result in results:
 
@@ -344,7 +356,6 @@ def analyze_road_image(image):
                 box.xyxy[0]
             )
 
-            # Safety bounds
             x1 = max(0, x1)
             y1 = max(0, y1)
             x2 = min(width, x2)
@@ -353,16 +364,15 @@ def analyze_road_image(image):
             if x2 <= x1 or y2 <= y1:
                 continue
 
+            # Crop detected sign
             crop = image.crop(
                 (x1, y1, x2, y2)
             )
 
-            # ------------------------------------------------
-            # HOG + SVM RECOGNITION
-            # ------------------------------------------------
-
+            # HOG + SVM recognition
             class_id, sign_name = recognize_crop(
-                crop
+                crop,
+                svm_model
             )
 
             category = get_category(
@@ -382,100 +392,151 @@ def analyze_road_image(image):
                 "box": (x1, y1, x2, y2)
             })
 
-    # --------------------------------------------------------
-    # NO SIGN FOUND
-    # --------------------------------------------------------
-
-    if not detections:
-
-        return (
-            "### No traffic sign detected\n\n"
-            "YOLO11n did not find a traffic sign "
-            "with the current detection threshold."
-        )
-
-    # --------------------------------------------------------
-    # FORMAT RESULT
-    # --------------------------------------------------------
-
-    output = "## Traffic Sign Analysis\n\n"
-
-    for i, item in enumerate(detections, 1):
-
-        output += f"### Sign {i}\n\n"
-
-        output += (
-            f"**Sign:** {item['sign']}\n\n"
-        )
-
-        output += (
-            f"**YOLO Detection Confidence:** "
-            f"{item['detection_confidence'] * 100:.2f}%\n\n"
-        )
-
-        output += (
-            f"**GTSRB Class:** "
-            f"{item['class_id']}\n\n"
-        )
-
-        output += (
-            f"**Category:** "
-            f"{item['category']}\n\n"
-        )
-
-        output += (
-            f"**Driver Assistance:** "
-            f"{item['action']}\n\n"
-        )
-
-        output += "---\n\n"
-
-    return output
+    return annotated_image, detections
 
 
 # ============================================================
-# GRADIO INTERFACE
+# USER INTERFACE
 # ============================================================
 
-with gr.Blocks(
-    title="Traffic Sign Recognition & Driver Assistance"
-) as demo:
+st.title(
+    "Traffic Sign Recognition & Driver Assistance System"
+)
 
-    gr.Markdown(
-        """
-        # Traffic Sign Recognition & Driver Assistance
+st.write(
+    "Detect traffic signs in road scenes, "
+    "recognize them using HOG + SVM, and "
+    "generate driver-assistance guidance."
+)
 
-        Upload a road image containing traffic signs.
+st.markdown(
+    """
+    **Pipeline**
 
-        **YOLO11n → Detection → HOG → SVM → Recognition → Driver Assistance**
-        """
+    Road Image → YOLO11n Detection → Sign Crop →
+    HOG Feature Extraction → SVM Recognition →
+    Sign Interpretation → Driver Assistance
+    """
+)
+
+st.divider()
+
+
+# ============================================================
+# LOAD MODELS
+# ============================================================
+
+try:
+
+    yolo_model, svm_model = load_models()
+
+except Exception as error:
+
+    st.error(
+        "Model loading failed."
     )
 
-    with gr.Row():
+    st.code(
+        str(error)
+    )
 
-        input_image = gr.Image(
-            type="pil",
-            label="Upload Road Image"
-        )
+    st.stop()
 
-        output = gr.Markdown(
-            label="Analysis Result"
-        )
 
-    analyze_button = gr.Button(
+# ============================================================
+# IMAGE UPLOAD
+# ============================================================
+
+uploaded_file = st.file_uploader(
+    "Upload a road image",
+    type=["jpg", "jpeg", "png"]
+)
+
+
+if uploaded_file is not None:
+
+    image = Image.open(
+        uploaded_file
+    ).convert("RGB")
+
+    st.image(
+        image,
+        caption="Uploaded Road Image",
+        use_container_width=True
+    )
+
+    if st.button(
         "Analyze Road Image",
-        variant="primary"
-    )
+        type="primary"
+    ):
 
-    analyze_button.click(
-        fn=analyze_road_image,
-        inputs=input_image,
-        outputs=output
-    )
+        with st.spinner(
+            "Detecting and recognizing traffic signs..."
+        ):
 
+            annotated_image, detections = analyze_road_image(
+                image,
+                yolo_model,
+                svm_model
+            )
 
-# ============================================================
-# LAUNCH
-# ============================================================
+        if not detections:
 
-demo.launch()
+            st.warning(
+                "No traffic sign detected with "
+                "the current detection threshold."
+            )
+
+        else:
+
+            st.success(
+                f"{len(detections)} traffic sign(s) detected."
+            )
+
+            st.subheader(
+                "Traffic Sign Analysis"
+            )
+
+            for index, item in enumerate(
+                detections,
+                start=1
+            ):
+
+                st.markdown(
+                    f"### Sign {index}"
+                )
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+
+                    st.write(
+                        f"**Sign:** {item['sign']}"
+                    )
+
+                    st.write(
+                        f"**GTSRB Class:** "
+                        f"{item['class_id']}"
+                    )
+
+                    st.write(
+                        f"**Category:** "
+                        f"{item['category']}"
+                    )
+
+                with col2:
+
+                    st.write(
+                        f"**YOLO Detection Confidence:** "
+                        f"{item['detection_confidence'] * 100:.2f}%"
+                    )
+
+                    st.write(
+                        "**Driver Assistance:**"
+                    )
+
+                    st.info(
+                        item["action"]
+                    )
+
+                st.divider()
