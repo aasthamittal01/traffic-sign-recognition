@@ -1,9 +1,10 @@
 streamlit
 ultralytics
-opencv-python-headless
 scikit-learn
 scikit-image
 pillow
 numpy
+pandas
+opencv-python-headless
 joblib
 requests
