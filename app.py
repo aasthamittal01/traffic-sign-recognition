@@ -1,103 +1,59 @@
-import streamlit.components.v1 as components
 import os
+import json
+import base64
 import requests
 import joblib
-import cv2
 import numpy as np
 import pandas as pd
+import cv2
 import streamlit as st
-
+import streamlit.components.v1 as components
 from PIL import Image
 from skimage.feature import hog
 from ultralytics import YOLO
-
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
 
 st.set_page_config(
     page_title="Traffic Sign Recognition & Driver Assistance",
     layout="wide"
 )
 
+# ============================================================
+# MODEL DOWNLOAD / LOADING
+# ============================================================
+
 YOLO_MODEL_PATH = "traffic_sign_detector.pt"
 SVM_MODEL_PATH = "traffic_sign_final_model.pkl"
 
 YOLO_MODEL_URL = (
-    "https://github.com/aasthamittal01/"
-    "traffic-sign-recognition/releases/download/"
-    "v1.0/traffic_sign_detector.pt"
+    "https://github.com/aasthamittal01/traffic-sign-recognition/"
+    "releases/download/v1.0/traffic_sign_detector.pt"
 )
 
 SVM_MODEL_URL = (
-    "https://github.com/aasthamittal01/"
-    "traffic-sign-recognition/releases/download/"
-    "v1.0/traffic_sign_final_model.pkl"
+    "https://github.com/aasthamittal01/traffic-sign-recognition/"
+    "releases/download/v1.0/traffic_sign_final_model.pkl"
 )
 
 
-# ============================================================
-# DOWNLOAD MODELS
-# ============================================================
-
 def download_file(url, path):
-
-    response = requests.get(
-        url,
-        stream=True,
-        timeout=300
-    )
-
-    response.raise_for_status()
+    r = requests.get(url, stream=True, timeout=300)
+    r.raise_for_status()
 
     with open(path, "wb") as f:
-
-        for chunk in response.iter_content(
-            chunk_size=1024 * 1024
-        ):
-
+        for chunk in r.iter_content(chunk_size=1024 * 1024):
             if chunk:
                 f.write(chunk)
 
 
 @st.cache_resource
 def load_models():
-
     if not os.path.exists(YOLO_MODEL_PATH):
-
-        with st.spinner(
-            "Downloading YOLO11n model..."
-        ):
-
-            download_file(
-                YOLO_MODEL_URL,
-                YOLO_MODEL_PATH
-            )
+        download_file(YOLO_MODEL_URL, YOLO_MODEL_PATH)
 
     if not os.path.exists(SVM_MODEL_PATH):
+        download_file(SVM_MODEL_URL, SVM_MODEL_PATH)
 
-        with st.spinner(
-            "Downloading SVM model..."
-        ):
-
-            download_file(
-                SVM_MODEL_URL,
-                SVM_MODEL_PATH
-            )
-
-    detector = YOLO(
-        YOLO_MODEL_PATH
-    )
-
-    classifier = joblib.load(
-        SVM_MODEL_PATH
-    )
-
-    return detector, classifier
-
-
-detector, classifier = load_models()
+    return YOLO(YOLO_MODEL_PATH), joblib.load(SVM_MODEL_PATH)
 
 
 # ============================================================
@@ -105,7 +61,6 @@ detector, classifier = load_models()
 # ============================================================
 
 SIGN_NAMES = [
-
     "Speed limit (20km/h)",
     "Speed limit (30km/h)",
     "Speed limit (50km/h)",
@@ -147,12 +102,13 @@ SIGN_NAMES = [
     "Keep right",
     "Keep left",
     "Roundabout mandatory",
-    "End of no passing"
+    "End of no passing",
+    "End of no passing by vehicles over 3.5 metric tons"
 ]
 
 
 # ============================================================
-# SIGN CATEGORY
+# SIGN CATEGORIES
 # ============================================================
 
 def get_category(sign_name):
@@ -166,11 +122,9 @@ def get_category(sign_name):
         or "prohibited" in sign_name
         or sign_name == "No vehicles"
     ):
-
         return "Prohibitory"
 
     warning_signs = [
-
         "General caution",
         "Dangerous curve to the left",
         "Dangerous curve to the right",
@@ -191,7 +145,6 @@ def get_category(sign_name):
         return "Warning"
 
     priority_signs = [
-
         "Right-of-way at the next intersection",
         "Priority road",
         "Yield",
@@ -208,7 +161,7 @@ def get_category(sign_name):
 
 
 # ============================================================
-# DRIVER ASSISTANCE DATABASE
+# DRIVER ASSISTANCE ACTIONS
 # ============================================================
 
 DRIVER_ACTIONS = {
@@ -337,16 +290,18 @@ DRIVER_ACTIONS = {
         "Enter the roundabout according to the indicated direction.",
 
     "End of no passing":
-        "The previous no-passing restriction ends."
+        "The previous no-passing restriction ends.",
+
+    "End of no passing by vehicles over 3.5 metric tons":
+        "The previous no-passing restriction for heavy vehicles ends."
 }
 
 
 # ============================================================
-# PRIORITY SYSTEM
+# PRIORITY
 # ============================================================
 
 HIGH_PRIORITY = [
-
     "Stop",
     "Yield",
     "No entry",
@@ -361,9 +316,7 @@ HIGH_PRIORITY = [
     "Speed limit (120km/h)"
 ]
 
-
 MEDIUM_PRIORITY = [
-
     "General caution",
     "Dangerous curve to the left",
     "Dangerous curve to the right",
@@ -393,64 +346,39 @@ def get_priority(sign_name):
 
 
 def priority_score(priority):
-
-    if priority == "HIGH":
-        return 3
-
-    if priority == "MEDIUM":
-        return 2
-
-    return 1
+    return {
+        "HIGH": 3,
+        "MEDIUM": 2,
+        "LOW": 1
+    }[priority]
 
 
 # ============================================================
-# IMAGE LOCATION
+# LOCATION
 # ============================================================
 
-def get_location(
-    x1,
-    y1,
-    x2,
-    y2,
-    width,
-    height
-):
+def get_location(x1, y1, x2, y2, width, height):
 
-    center_x = (
-        x1 + x2
-    ) / 2
+    center_x = (x1 + x2) / 2
+    center_y = (y1 + y2) / 2
 
-    center_y = (
-        y1 + y2
-    ) / 2
-
-    if center_x < width / 3:
-
-        horizontal = "Left"
-
-    elif center_x < 2 * width / 3:
-
-        horizontal = "Center"
-
-    else:
-
-        horizontal = "Right"
-
-    if center_y < height / 3:
-
-        vertical = "Upper"
-
-    elif center_y < 2 * height / 3:
-
-        vertical = "Middle"
-
-    else:
-
-        vertical = "Lower"
-
-    return (
-        f"{horizontal} - {vertical}"
+    horizontal = (
+        "Left"
+        if center_x < width / 3
+        else "Center"
+        if center_x < 2 * width / 3
+        else "Right"
     )
+
+    vertical = (
+        "Upper"
+        if center_y < height / 3
+        else "Middle"
+        if center_y < 2 * height / 3
+        else "Lower"
+    )
+
+    return f"{horizontal} - {vertical}"
 
 
 # ============================================================
@@ -459,45 +387,29 @@ def get_location(
 
 def extract_hog_features(crop):
 
-    crop = cv2.resize(
-        crop,
-        (32, 32)
-    )
+    crop = cv2.resize(crop, (32, 32))
 
-    gray = np.mean(
-        crop,
-        axis=2
-    ).astype(np.uint8)
+    gray = np.mean(crop, axis=2).astype(np.uint8)
 
-    features = hog(
-
+    return hog(
         gray,
-
         orientations=9,
-
         pixels_per_cell=(8, 8),
-
         cells_per_block=(2, 2)
     )
-
-    return features
 
 
 # ============================================================
 # ATTENTION LEVEL
 # ============================================================
 
-def get_attention_level(
-    detections
-):
+def get_attention_level(detections):
 
     if not detections:
         return "NO SIGN DETECTED"
 
     priorities = [
-
         d["Priority"]
-
         for d in detections
     ]
 
@@ -511,15 +423,12 @@ def get_attention_level(
 
 
 # ============================================================
-# SCENE INSTRUCTION ENGINE
+# SCENE-LEVEL DRIVER INSTRUCTION
 # ============================================================
 
-def generate_scene_instruction(
-    detections
-):
+def generate_scene_instruction(detections):
 
     if not detections:
-
         return (
             "No traffic sign was detected. "
             "Continue normal visual observation."
@@ -527,22 +436,13 @@ def generate_scene_instruction(
 
     instructions = []
 
-    # STOP
-
     if any(
-
         d["Detected Sign"] == "Stop"
-
         for d in detections
     ):
-
         instructions.append(
-
-            "STOP: Come to a complete stop "
-            "and proceed only when safe."
+            "STOP: Come to a complete stop and proceed only when safe."
         )
-
-    # SPEED LIMITS
 
     speed_values = []
 
@@ -551,9 +451,7 @@ def generate_scene_instruction(
         if "Speed limit" in d["Detected Sign"]:
 
             try:
-
                 value = int(
-
                     d["Detected Sign"]
                     .split("(")[1]
                     .split("km/h")[0]
@@ -561,166 +459,100 @@ def generate_scene_instruction(
 
                 speed_values.append(value)
 
-            except:
-
+            except Exception:
                 pass
 
     if speed_values:
 
-        lowest_speed = min(
-            speed_values
-        )
-
         instructions.append(
-
-            f"Speed control: Maintain speed "
-            f"at or below {lowest_speed} km/h."
+            f"Speed control: Maintain speed at or below "
+            f"{min(speed_values)} km/h."
         )
-
-    # YIELD
 
     if any(
-
         d["Detected Sign"] == "Yield"
-
         for d in detections
     ):
-
         instructions.append(
-
-            "Give way to other road users "
-            "before proceeding."
+            "Give way to other road users before proceeding."
         )
 
-    # CURVES
-
     if any(
-
-        "curve" in
-        d["Detected Sign"].lower()
-
+        "curve" in d["Detected Sign"].lower()
         for d in detections
     ):
-
         instructions.append(
-
-            "Curve warning: Reduce speed "
-            "and prepare for changing road direction."
+            "Curve warning: Reduce speed and prepare "
+            "for changing road direction."
         )
 
-    # ROAD WORK
-
     if any(
-
         d["Detected Sign"] == "Road work"
-
         for d in detections
     ):
-
         instructions.append(
-
-            "Road work detected: Slow down "
-            "and remain alert for workers or "
-            "changes in road layout."
+            "Road work detected: Slow down and remain "
+            "alert for workers or changes in road layout."
         )
 
-    # SLIPPERY
-
     if any(
-
         d["Detected Sign"] == "Slippery road"
-
         for d in detections
     ):
-
         instructions.append(
-
-            "Slippery-road warning: Avoid "
-            "sudden braking or steering."
+            "Slippery-road warning: Avoid sudden braking or steering."
         )
 
-    # PEDESTRIANS / CHILDREN
-
     if any(
-
         d["Detected Sign"] in [
             "Pedestrians",
             "Children crossing"
         ]
-
         for d in detections
     ):
-
         instructions.append(
-
-            "Pedestrian warning: Reduce speed "
-            "and watch carefully for people crossing."
+            "Pedestrian warning: Reduce speed and watch "
+            "carefully for people crossing."
         )
 
-    # OVERTAKING
-
     if any(
-
-        "No passing" in
-        d["Detected Sign"]
-
+        "No passing" in d["Detected Sign"]
         for d in detections
     ):
-
         instructions.append(
-
             "Overtaking restriction: Do not overtake."
         )
 
     if not instructions:
 
         instructions.append(
-
-            "Follow the detected road signs "
-            "and continue with appropriate caution."
+            "Follow the detected road signs and continue "
+            "with appropriate caution."
         )
 
     return "\n".join(
-
-        f"• {instruction}"
-
-        for instruction in instructions
+        f"• {x}"
+        for x in instructions
     )
 
 
 # ============================================================
-# ROAD-SCENE ANALYSIS
+# ROAD-SCENE RECOGNITION
 # ============================================================
 
 def recognize_road_image(
-    input_image
+    input_image,
+    detector,
+    classifier
 ):
 
-    if input_image is None:
-
-        return (
-
-            None,
-
-            "Please upload a road image.",
-
-            pd.DataFrame(),
-
-            None
-        )
-
-    image = np.array(
-        input_image
-    )
+    image = np.array(input_image)
 
     if image.shape[-1] == 4:
-
         image = image[:, :, :3]
 
     image = cv2.cvtColor(
-
         image,
-
         cv2.COLOR_RGB2BGR
     )
 
@@ -728,16 +560,10 @@ def recognize_road_image(
 
     height, width = image.shape[:2]
 
-    # --------------------------------------------------------
-    # YOLO DETECTION
-    # --------------------------------------------------------
-
+    # YOLO detects traffic-sign locations
     yolo_results = detector.predict(
-
         source=image,
-
         conf=0.15,
-
         verbose=False
     )
 
@@ -745,14 +571,9 @@ def recognize_road_image(
 
     detections = []
 
-    # --------------------------------------------------------
-    # PROCESS DETECTED SIGNS
-    # --------------------------------------------------------
-
     for box in boxes:
 
         x1, y1, x2, y2 = (
-
             box.xyxy[0]
             .cpu()
             .numpy()
@@ -760,71 +581,30 @@ def recognize_road_image(
         )
 
         detection_confidence = float(
-
             box.conf[0]
             .cpu()
             .numpy()
         )
 
-        x1 = max(
-            0,
-            x1
-        )
-
-        y1 = max(
-            0,
-            y1
-        )
-
-        x2 = min(
-            width,
-            x2
-        )
-
-        y2 = min(
-            height,
-            y2
-        )
+        x1 = max(0, x1)
+        y1 = max(0, y1)
+        x2 = min(width, x2)
+        y2 = min(height, y2)
 
         if x2 <= x1 or y2 <= y1:
-
             continue
 
-        # ----------------------------------------------------
-        # EXPANDED CROP
-        # ----------------------------------------------------
-
         box_width = x2 - x1
-
         box_height = y2 - y1
 
-        pad_x = int(
-            box_width * 0.10
-        )
+        # 10% crop expansion
+        pad_x = int(box_width * 0.10)
+        pad_y = int(box_height * 0.10)
 
-        pad_y = int(
-            box_height * 0.10
-        )
-
-        cx1 = max(
-            0,
-            x1 - pad_x
-        )
-
-        cy1 = max(
-            0,
-            y1 - pad_y
-        )
-
-        cx2 = min(
-            width,
-            x2 + pad_x
-        )
-
-        cy2 = min(
-            height,
-            y2 + pad_y
-        )
+        cx1 = max(0, x1 - pad_x)
+        cy1 = max(0, y1 - pad_y)
+        cx2 = min(width, x2 + pad_x)
+        cy2 = min(height, y2 + pad_y)
 
         crop = original[
             cy1:cy2,
@@ -832,49 +612,28 @@ def recognize_road_image(
         ]
 
         if crop.size == 0:
-
             continue
 
-        # ----------------------------------------------------
-        # HOG
-        # ----------------------------------------------------
+        # HOG feature extraction
+        features = extract_hog_features(crop)
 
-        features = extract_hog_features(
-            crop
-        )
-
-        # ----------------------------------------------------
-        # SVM
-        # ----------------------------------------------------
-
+        # SVM classification
         predicted_class = int(
-
-            classifier.predict(
-                [features]
-            )[0]
+            classifier.predict([features])[0]
         )
 
-        sign_name = SIGN_NAMES[
-            predicted_class
-        ]
+        sign_name = SIGN_NAMES[predicted_class]
 
-        category = get_category(
-            sign_name
-        )
+        category = get_category(sign_name)
 
-        priority = get_priority(
-            sign_name
-        )
+        priority = get_priority(sign_name)
 
         action = DRIVER_ACTIONS.get(
-
             sign_name,
-
             "Proceed carefully and follow the traffic sign."
         )
 
         location = get_location(
-
             x1,
             y1,
             x2,
@@ -884,53 +643,30 @@ def recognize_road_image(
         )
 
         detections.append({
-
-            "Class ID":
-                predicted_class,
-
-            "Detected Sign":
-                sign_name,
-
-            "Category":
-                category,
-
-            "Priority":
-                priority,
-
+            "Class ID": predicted_class,
+            "Detected Sign": sign_name,
+            "Category": category,
+            "Priority": priority,
             "Detection Confidence (%)":
                 round(
                     detection_confidence * 100,
                     1
                 ),
-
-            "Location":
-                location,
-
-            "Driver Assistance":
-                action,
-
-            "Crop":
-                crop,
-
-            "Box":
-                (
-                    x1,
-                    y1,
-                    x2,
-                    y2
-                )
+            "Location": location,
+            "Driver Assistance": action,
+            "Crop": crop,
+            "Box": (
+                x1,
+                y1,
+                x2,
+                y2
+            )
         })
 
-    # ========================================================
-    # SORT BY PRIORITY
-    # ========================================================
-
+    # Highest priority signs first
     detections.sort(
-
         key=lambda d:
-        -priority_score(
-            d["Priority"]
-        )
+        -priority_score(d["Priority"])
     )
 
     # ========================================================
@@ -948,118 +684,79 @@ def recognize_road_image(
         ]
 
         cv2.rectangle(
-
             annotated,
-
             (x1, y1),
-
             (x2, y2),
-
             (0, 255, 0),
-
             3
         )
 
         label = (
-
-            f"{d['Detected Sign']} "
-            f"| {confidence:.0f}%"
+            f"{d['Detected Sign']} | "
+            f"{confidence:.0f}%"
         )
 
         font = cv2.FONT_HERSHEY_SIMPLEX
 
         font_scale = 0.55
-
         thickness = 2
 
-        text_size, baseline = (
-
-            cv2.getTextSize(
-
-                label,
-
-                font,
-
-                font_scale,
-
-                thickness
-            )
+        text_size, baseline = cv2.getTextSize(
+            label,
+            font,
+            font_scale,
+            thickness
         )
 
-        text_width = text_size[0]
-
-        text_height = text_size[1]
+        text_width, text_height = text_size
 
         label_y = max(
-
             y1 - 8,
-
             text_height + 10
         )
 
         cv2.rectangle(
-
             annotated,
-
             (
-
                 x1,
-
                 label_y
                 - text_height
                 - baseline
                 - 5
             ),
-
             (
-
                 x1
                 + text_width
                 + 8,
-
                 label_y + 5
             ),
-
             (0, 255, 0),
-
             -1
         )
 
         cv2.putText(
-
             annotated,
-
             label,
-
             (x1 + 3, label_y),
-
             font,
-
             font_scale,
-
             (0, 0, 0),
-
             thickness,
-
             cv2.LINE_AA
         )
 
     annotated_rgb = cv2.cvtColor(
-
         annotated,
-
         cv2.COLOR_BGR2RGB
     )
 
     # ========================================================
-    # NO DETECTION
+    # NO DETECTIONS
     # ========================================================
 
     if not detections:
 
-        summary = """
-
-## Road Scene Analysis
+        summary = """## Road Scene Analysis
 
 ### Detection Overview
 
@@ -1067,82 +764,56 @@ def recognize_road_image(
 
 **Attention Level:** NO SIGN DETECTED
 
-No traffic sign was detected above the current
-detection threshold.
+No traffic sign was detected above the current detection threshold.
 
-Continue normal visual observation of the road.
-
-"""
+Continue normal visual observation of the road."""
 
         return (
-
             annotated_rgb,
-
             summary,
-
             pd.DataFrame(),
-
             None
         )
 
     # ========================================================
-    # SCENE STATISTICS
+    # SCENE SUMMARY
     # ========================================================
 
-    total_signs = len(
-        detections
-    )
+    total_signs = len(detections)
 
     high_count = sum(
-
         d["Priority"] == "HIGH"
-
         for d in detections
     )
 
     medium_count = sum(
-
         d["Priority"] == "MEDIUM"
-
         for d in detections
     )
 
     low_count = sum(
-
         d["Priority"] == "LOW"
-
         for d in detections
     )
 
     categories = sorted(
-
         set(
-
             d["Category"]
-
             for d in detections
         )
     )
 
     attention_level = get_attention_level(
-
         detections
     )
 
     highest_priority = detections[0]
 
     scene_instruction = generate_scene_instruction(
-
         detections
     )
 
-    # ========================================================
-    # SUMMARY
-    # ========================================================
-
-    summary = f"""
-
-## Road Scene Analysis
+    summary = f"""## Road Scene Analysis
 
 ### Detection Overview
 
@@ -1162,15 +833,15 @@ Continue normal visual observation of the road.
 
 ### Highest-Priority Sign
 
-**{highest_priority["Detected Sign"]}**
+**{highest_priority['Detected Sign']}**
 
-**Category:** {highest_priority["Category"]}
+**Category:** {highest_priority['Category']}
 
-**Priority:** {highest_priority["Priority"]}
+**Priority:** {highest_priority['Priority']}
 
-**Location:** {highest_priority["Location"]}
+**Location:** {highest_priority['Location']}
 
-**Detection confidence:** {highest_priority["Detection Confidence (%)"]}%
+**Detection confidence:** {highest_priority['Detection Confidence (%)']}%
 
 ---
 
@@ -1182,192 +853,133 @@ Continue normal visual observation of the road.
 
 ### Processing Pipeline
 
-**1. YOLO11n**
-
-Detects and localizes traffic signs in the road scene.
+**1. YOLO11n** — Detects and localizes traffic signs in the road scene.
 
 ↓
 
-**2. Sign Cropping**
-
-Each detected sign is isolated from the road image.
+**2. Sign Cropping** — Each detected sign is isolated from the road image.
 
 ↓
 
-**3. HOG Feature Extraction**
-
-Extracts visual shape and edge features.
+**3. HOG Feature Extraction** — Extracts visual shape and edge features.
 
 ↓
 
-**4. SVM Classification**
-
-Classifies the cropped sign into one of the 43 GTSRB classes.
+**4. SVM Classification** — Classifies the cropped sign into one of the 43 GTSRB classes.
 
 ↓
 
-**5. Metadata Analysis**
-
-Adds category, priority, location and driving guidance.
+**5. Metadata Analysis** — Adds category, priority, location and driving guidance.
 
 ↓
 
-**6. Scene-Level Interpretation**
-
-Combines multiple detected signs into a single road-safety summary.
-
+**6. Scene-Level Interpretation** — Combines multiple detected signs into a single road-safety summary.
 """
 
     # ========================================================
     # RESULT TABLE
     # ========================================================
 
-    table_data = []
-
-    for d in detections:
-
-        table_data.append({
-
-            "Class ID":
-                d["Class ID"],
-
-            "Detected Sign":
-                d["Detected Sign"],
-
-            "Category":
-                d["Category"],
-
-            "Priority":
-                d["Priority"],
-
-            "Detection Confidence (%)":
-                d["Detection Confidence (%)"],
-
-            "Location":
-                d["Location"],
-
-            "Driver Assistance":
-                d["Driver Assistance"]
-        })
+    table_data = [
+        {
+            k: d[k]
+            for k in [
+                "Class ID",
+                "Detected Sign",
+                "Category",
+                "Priority",
+                "Detection Confidence (%)",
+                "Location",
+                "Driver Assistance"
+            ]
+        }
+        for d in detections
+    ]
 
     result_table = pd.DataFrame(
         table_data
     )
 
     # ========================================================
-    # SIGN CROP CONTACT SHEET
+    # DETECTED SIGN CROP SHEET
     # ========================================================
 
     crop_images = []
 
-    for i, d in enumerate(
-        detections
-    ):
-
-        crop = d["Crop"].copy()
+    for i, d in enumerate(detections):
 
         crop = cv2.cvtColor(
-
-            crop,
-
+            d["Crop"].copy(),
             cv2.COLOR_BGR2RGB
         )
 
         crop = cv2.resize(
-
             crop,
-
             (180, 180)
         )
 
         crop = cv2.copyMakeBorder(
-
             crop,
-
             45,
-
             5,
-
             5,
-
             5,
-
             cv2.BORDER_CONSTANT,
-
             value=(255, 255, 255)
         )
 
-        cv2.putText(
-
+        crop = cv2.cvtColor(
             crop,
+            cv2.COLOR_RGB2BGR
+        )
 
+        cv2.putText(
+            crop,
             f"Sign {i + 1}",
-
             (8, 20),
-
             cv2.FONT_HERSHEY_SIMPLEX,
-
             0.55,
-
             (0, 0, 0),
-
             2,
-
             cv2.LINE_AA
         )
 
-        sign_text = d[
-            "Detected Sign"
-        ]
+        sign_text = d["Detected Sign"]
 
         if len(sign_text) > 24:
-
             sign_text = (
                 sign_text[:24]
                 + "..."
             )
 
         cv2.putText(
-
             crop,
-
             sign_text,
-
             (8, 38),
-
             cv2.FONT_HERSHEY_SIMPLEX,
-
             0.38,
-
             (0, 0, 0),
-
             1,
-
             cv2.LINE_AA
         )
 
         crop_images.append(
-            crop
+            cv2.cvtColor(
+                crop,
+                cv2.COLOR_BGR2RGB
+            )
         )
 
-    if crop_images:
-
-        crop_sheet = np.hstack(
-            crop_images
-        )
-
-    else:
-
-        crop_sheet = None
+    crop_sheet = (
+        np.hstack(crop_images)
+        if crop_images
+        else None
+    )
 
     return (
-
         annotated_rgb,
-
         summary,
-
         result_table,
-
         crop_sheet
     )
 
@@ -1378,530 +990,957 @@ Combines multiple detected signs into a single road-safety summary.
 
 SCENARIOS = {
 
-    "STOP": {
-
+    14: {
         "name": "STOP",
-
-        "action":
-            "Vehicle slows down and stops",
-
+        "action": "Vehicle slows down and stops",
         "target": 0,
-
         "behavior": "stop"
     },
 
-    "Speed Limit 50": {
-
-        "name":
-            "Speed Limit 50",
-
-        "action":
-            "Vehicle reduces speed to 50 km/h",
-
+    2: {
+        "name": "Speed Limit 50",
+        "action": "Vehicle reduces speed to 50 km/h",
         "target": 50,
-
         "behavior": "slow"
     },
 
-    "Dangerous Curve Right": {
-
-        "name":
-            "Dangerous Curve Right",
-
-        "action":
-            "Vehicle slows and follows the right curve",
-
+    20: {
+        "name": "Dangerous Curve Right",
+        "action": "Vehicle slows and follows the right curve",
         "target": 35,
-
         "behavior": "curve-right"
     },
 
-    "YIELD": {
-
+    13: {
         "name": "YIELD",
-
-        "action":
-            "Vehicle slows and continues carefully",
-
+        "action": "Vehicle slows and continues carefully",
         "target": 25,
-
         "behavior": "yield"
     },
 
-    "Road Work": {
-
-        "name":
-            "Road Work",
-
-        "action":
-            "Vehicle slows and proceeds carefully",
-
+    25: {
+        "name": "Road Work",
+        "action": "Vehicle slows and proceeds carefully",
         "target": 30,
-
         "behavior": "slow"
     },
 
-    "Turn Right Ahead": {
-
-        "name":
-            "Turn Right Ahead",
-
-        "action":
-            "Vehicle slows and takes the right turn",
-
+    33: {
+        "name": "Turn Right Ahead",
+        "action": "Vehicle slows and takes the right turn",
         "target": 30,
-
         "behavior": "turn-right"
     },
 
-    "Turn Left Ahead": {
-
-        "name":
-            "Turn Left Ahead",
-
-        "action":
-            "Vehicle slows and takes the left turn",
-
+    34: {
+        "name": "Turn Left Ahead",
+        "action": "Vehicle slows and takes the left turn",
         "target": 30,
-
         "behavior": "turn-left"
     }
 }
 
 
-def simulator():
+# ============================================================
+# SIMULATOR HTML
+# ============================================================
 
-    st.markdown("---")
+def make_simulator_html():
 
-    st.header(
-        "Driving Assistance Simulation"
+    scenario_data = json.dumps(
+        SCENARIOS
     )
 
-    col1, col2 = st.columns(2)
+    # Self-contained sign graphics.
+    # These are embedded so the Streamlit deployment does not
+    # depend on Colab's /content/traffic_signs directory.
 
-    with col1:
+    sign_svgs = {
 
-        scenario = st.selectbox(
+        14:
+        """<svg xmlns='http://www.w3.org/2000/svg'
+        viewBox='0 0 100 100'>
+        <rect width='100' height='100' rx='12' fill='white'/>
+        <polygon points='30,8 70,8 92,30 92,70 70,92 30,92 8,70 8,30'
+        fill='#d71920'/>
+        <polygon points='35,18 65,18 82,35 82,65 65,82 35,82 18,65 18,35'
+        fill='white'/>
+        <text x='50' y='57' text-anchor='middle'
+        font-family='Arial' font-size='17'
+        font-weight='bold' fill='#111'>STOP</text>
+        </svg>""",
 
-            "Traffic Sign",
+        2:
+        """<svg xmlns='http://www.w3.org/2000/svg'
+        viewBox='0 0 100 100'>
+        <rect width='100' height='100' rx='50' fill='#d71920'/>
+        <circle cx='50' cy='50' r='40' fill='white'/>
+        <text x='50' y='58' text-anchor='middle'
+        font-family='Arial' font-size='30'
+        font-weight='bold' fill='#111'>50</text>
+        </svg>""",
 
-            list(
-                SCENARIOS.keys()
-            )
-        )
+        20:
+        """<svg xmlns='http://www.w3.org/2000/svg'
+        viewBox='0 0 100 100'>
+        <polygon points='50,5 95,90 5,90'
+        fill='#d71920'/>
+        <polygon points='50,16 82,80 18,80'
+        fill='white'/>
+        <path d='M35 67 C42 55,48 55,52 44
+        C56 34,61 34,67 25'
+        fill='none' stroke='#111'
+        stroke-width='7'/>
+        </svg>""",
 
-    with col2:
+        13:
+        """<svg xmlns='http://www.w3.org/2000/svg'
+        viewBox='0 0 100 100'>
+        <polygon points='50,5 95,92 5,92'
+        fill='#d71920'/>
+        <polygon points='50,18 79,76 21,76'
+        fill='white'/>
+        </svg>""",
 
-        initial_speed = st.slider(
+        25:
+        """<svg xmlns='http://www.w3.org/2000/svg'
+        viewBox='0 0 100 100'>
+        <polygon points='50,5 95,90 5,90'
+        fill='#d71920'/>
+        <polygon points='50,17 80,78 20,78'
+        fill='#f5c542'/>
+        <path d='M35 69 L42 53 L49 69
+        L56 53 L64 69'
+        fill='none' stroke='#111'
+        stroke-width='5'/>
+        </svg>""",
 
-            "Initial Speed (km/h)",
+        33:
+        """<svg xmlns='http://www.w3.org/2000/svg'
+        viewBox='0 0 100 100'>
+        <polygon points='50,5 95,90 5,90'
+        fill='#d71920'/>
+        <polygon points='50,17 80,78 20,78'
+        fill='white'/>
+        <path d='M38 68 L55 50 L55 62 L70 62'
+        fill='none' stroke='#111'
+        stroke-width='7'/>
+        </svg>""",
 
-            min_value=20,
+        34:
+        """<svg xmlns='http://www.w3.org/2000/svg'
+        viewBox='0 0 100 100'>
+        <polygon points='50,5 95,90 5,90'
+        fill='#d71920'/>
+        <polygon points='50,17 80,78 20,78'
+        fill='white'/>
+        <path d='M62 68 L45 50 L45 62 L30 62'
+        fill='none' stroke='#111'
+        stroke-width='7'/>
+        </svg>"""
+    }
 
-            max_value=100,
+    sign_images = {
+        class_id:
+        "data:image/svg+xml;base64,"
+        + base64.b64encode(
+            svg.encode()
+        ).decode()
+        for class_id, svg
+        in sign_svgs.items()
+    }
 
-            value=65,
-
-            step=5
-        )
-
-    data = SCENARIOS[
-        scenario
-    ]
-
-    st.markdown(
-
-        f"""
-        ### Selected Scenario
-
-        **Traffic Sign:** {data["name"]}
-
-        **Driver Assistance:** {data["action"]}
-
-        **Target Speed:** {data["target"]} km/h
-        """
+    image_data = json.dumps(
+        sign_images
     )
 
-    if st.button(
+    # ========================================================
+    # HTML + CSS
+    # ========================================================
 
-        "Start Simulation",
+    html = f'''
+<!DOCTYPE html>
+<html>
+<head>
 
-        type="primary"
-    ):
+<style>
 
-        placeholder = st.empty()
+body {{
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #eef1f5;
+    color: #111827;
+}}
 
-        current_speed = float(
-            initial_speed
-        )
+.dashboard {{
+    width: 1100px;
+    max-width: 96%;
+    margin: 20px auto;
+    background: white;
+    border-radius: 18px;
+    padding: 20px;
+    box-shadow: 0 8px 25px rgba(0,0,0,.12);
+}}
 
-        steps = 30
+.header {{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}}
 
-        for step in range(
-            steps
-        ):
+.title {{
+    font-size: 25px;
+    font-weight: bold;
+    color: #111827;
+}}
 
-            progress = (
-                step /
-                (steps - 1)
-            )
+.controls {{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}}
 
-            if data[
-                "behavior"
-            ] == "stop":
+select,
+button {{
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid #999;
+    font-size: 15px;
+    color: #111827;
+    background: white;
+}}
 
-                if progress < 0.65:
+button {{
+    cursor: pointer;
+    font-weight: bold;
+    background: #f3f4f6;
+}}
 
-                    current_speed = (
-                        initial_speed
-                    )
+.speed-control {{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 15px;
+    color: #111827;
+    font-weight: bold;
+}}
 
-                else:
+.speed-control input {{
+    width: 230px;
+}}
 
-                    current_speed = (
+#speedValue {{
+    min-width: 70px;
+}}
 
-                        initial_speed *
+.scene {{
+    position: relative;
+    height: 430px;
+    overflow: hidden;
+    border-radius: 14px;
+    background:
+        linear-gradient(
+            #9ed8ff 0%,
+            #dff3ff 58%,
+            #78ad62 58%
+        );
+}}
 
-                        (
-                            1 -
-                            (
-                                progress
-                                - 0.65
-                            )
-                            / 0.35
-                        )
-                    )
+.road {{
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    height: 165px;
+    background: #404348;
+}}
 
-                    current_speed = max(
+.road-line {{
+    position: absolute;
+    top: 78px;
+    width: 100%;
+    border-top: 5px dashed #f5f5f5;
+}}
 
-                        0,
+.sign-pole {{
+    position: absolute;
+    right: 150px;
+    bottom: 105px;
+    width: 8px;
+    height: 145px;
+    background: #555;
+}}
 
-                        current_speed
-                    )
+.sign {{
+    position: absolute;
+    right: 115px;
+    bottom: 230px;
+    width: 75px;
+    height: 75px;
+    background: white;
+    border-radius: 10px;
+    padding: 5px;
+    object-fit: contain;
+    filter: contrast(1.4) saturate(1.4);
+    box-shadow: 0 4px 12px rgba(0,0,0,.35);
+}}
 
-            else:
+.car {{
+    position: absolute;
+    left: 40px;
+    bottom: 52px;
+    width: 120px;
+    height: 55px;
+    background: #26364a;
+    border-radius: 18px 28px 10px 10px;
+    box-shadow: 0 7px 10px rgba(0,0,0,.25);
+    transition: bottom .7s ease;
+}}
 
-                if progress < 0.45:
+.car:before {{
+    content: "";
+    position: absolute;
+    width: 60px;
+    height: 30px;
+    left: 28px;
+    top: -22px;
+    background: #344e68;
+    border-radius: 20px 20px 5px 5px;
+}}
 
-                    current_speed = (
-                        initial_speed
-                    )
+.wheel {{
+    position: absolute;
+    bottom: -10px;
+    width: 25px;
+    height: 25px;
+    background: #151515;
+    border-radius: 50%;
+}}
 
-                else:
+.wheel.left {{
+    left: 15px;
+}}
 
-                    reduction = (
+.wheel.right {{
+    right: 15px;
+}}
 
-                        initial_speed
-                        - data["target"]
-                    )
+.info {{
+    display: flex;
+    gap: 15px;
+    margin-top: 15px;
+}}
 
-                    current_speed = (
+.card {{
+    flex: 1;
+    padding: 15px;
+    border-radius: 12px;
+    background: #f1f4f8;
+}}
 
-                        initial_speed
+.label {{
+    font-size: 13px;
+    color: #374151;
+}}
 
-                        -
+.value {{
+    margin-top: 5px;
+    font-size: 18px;
+    font-weight: bold;
+    color: #111827;
+}}
 
-                        reduction *
+.status {{
+    margin-top: 15px;
+    padding: 14px;
+    border-radius: 10px;
+    text-align: center;
+    font-size: 17px;
+    font-weight: bold;
+    color: #111827;
+    background: #e5edff;
+}}
 
-                        (
-                            (
-                                progress
-                                - 0.45
-                            )
-                            / 0.55
-                        )
-                    )
+</style>
 
-                    current_speed = max(
+</head>
 
-                        data["target"],
+<body>
 
-                        current_speed
-                    )
+<div class="dashboard">
 
-            car_position = int(
+<div class="header">
 
-                5 +
-                progress * 90
-            )
+<div class="title">
+Traffic Sign Recognition & Driver Assistance
+</div>
 
-            if data[
-                "behavior"
-            ] == "stop":
+<div class="controls">
 
-                status = (
+<select id="scenario">
 
-                    "Vehicle approaching STOP sign..."
+<option value="14">
+STOP
+</option>
 
-                    if current_speed > 0
+<option value="2">
+Speed Limit 50
+</option>
 
-                    else
+<option value="20">
+Dangerous Curve Right
+</option>
 
-                    "STOP detected — Vehicle has stopped."
+<option value="13">
+YIELD
+</option>
+
+<option value="25">
+Road Work
+</option>
+
+<option value="33">
+Turn Right Ahead
+</option>
+
+<option value="34">
+Turn Left Ahead
+</option>
+
+</select>
+
+<button id="startButton">
+Start Simulation
+</button>
+
+</div>
+
+</div>
+
+
+<div class="speed-control">
+
+<span>
+Initial Speed:
+</span>
+
+<input
+type="range"
+id="initialSpeed"
+min="20"
+max="100"
+value="65"
+step="5"
+>
+
+<span id="speedValue">
+65 km/h
+</span>
+
+</div>
+
+
+<div class="scene">
+
+<div class="road">
+<div class="road-line"></div>
+</div>
+
+<div class="sign-pole"></div>
+
+<img
+id="sign"
+class="sign"
+>
+
+<div
+id="car"
+class="car"
+>
+
+<div class="wheel left"></div>
+<div class="wheel right"></div>
+
+</div>
+
+</div>
+
+
+<div class="info">
+
+<div class="card">
+
+<div class="label">
+Detected Traffic Sign
+</div>
+
+<div
+id="signName"
+class="value"
+>
+STOP
+</div>
+
+</div>
+
+
+<div class="card">
+
+<div class="label">
+Current Vehicle Speed
+</div>
+
+<div
+id="speed"
+class="value"
+>
+65 km/h
+</div>
+
+</div>
+
+
+<div class="card">
+
+<div class="label">
+Driver Assistance
+</div>
+
+<div
+id="action"
+class="value"
+>
+Vehicle slows down and stops
+</div>
+
+</div>
+
+</div>
+
+
+<div
+id="status"
+class="status"
+>
+Select a scenario, choose the starting speed and start the simulation.
+</div>
+
+</div>
+
+
+<script>
+
+const scenarios = {scenario_data};
+
+const images = {image_data};
+
+
+const scenarioSelect =
+    document.getElementById('scenario');
+
+const speedSlider =
+    document.getElementById('initialSpeed');
+
+const speedValue =
+    document.getElementById('speedValue');
+
+const sign =
+    document.getElementById('sign');
+
+const signName =
+    document.getElementById('signName');
+
+const speedDisplay =
+    document.getElementById('speed');
+
+const action =
+    document.getElementById('action');
+
+const status =
+    document.getElementById('status');
+
+const car =
+    document.getElementById('car');
+
+const startButton =
+    document.getElementById('startButton');
+
+
+let animationFrame = null;
+
+
+speedSlider.addEventListener(
+    'input',
+    () => {{
+        speedValue.innerText =
+            speedSlider.value + ' km/h';
+    }}
+);
+
+
+function updateScenario() {{
+
+    const id =
+        scenarioSelect.value;
+
+    const data =
+        scenarios[id];
+
+    sign.src =
+        images[id];
+
+    signName.innerText =
+        data.name;
+
+    action.innerText =
+        data.action;
+
+    speedDisplay.innerText =
+        speedSlider.value + ' km/h';
+
+    status.innerText =
+        'Select a scenario, choose the starting speed and start the simulation.';
+
+    car.style.left =
+        '40px';
+
+    car.style.bottom =
+        '52px';
+}}
+
+
+scenarioSelect.addEventListener(
+    'change',
+    updateScenario
+);
+
+
+function startSimulation() {{
+
+    cancelAnimationFrame(
+        animationFrame
+    );
+
+    const id =
+        scenarioSelect.value;
+
+    const data =
+        scenarios[id];
+
+    const initialSpeed =
+        Number(speedSlider.value);
+
+    const targetSpeed =
+        data.target;
+
+    let currentSpeed =
+        initialSpeed;
+
+    let position =
+        40;
+
+    let lastTime =
+        null;
+
+    let reachedSign =
+        false;
+
+
+    car.style.left =
+        '40px';
+
+    car.style.bottom =
+        '52px';
+
+    speedDisplay.innerText =
+        initialSpeed + ' km/h';
+
+    status.innerText =
+        'Vehicle approaching the traffic sign...';
+
+
+    function animate(timestamp) {{
+
+        if (!lastTime)
+            lastTime = timestamp;
+
+        const elapsed =
+            (timestamp - lastTime) / 1000;
+
+        lastTime =
+            timestamp;
+
+
+        if (
+            position >= 540
+            &&
+            !reachedSign
+        ) {{
+
+            reachedSign = true;
+
+            status.innerText =
+                data.name
+                + ' detected — '
+                + data.action;
+        }}
+
+
+        if (reachedSign) {{
+
+            if (
+                currentSpeed > targetSpeed
+            ) {{
+
+                currentSpeed -=
+                    25 * elapsed;
+
+                if (
+                    currentSpeed < targetSpeed
                 )
+                    currentSpeed =
+                        targetSpeed;
 
-            elif data[
-                "behavior"
-            ] == "curve-right":
+            }}
 
-                status = (
+            else if (
+                currentSpeed < targetSpeed
+            ) {{
 
-                    "Vehicle approaching dangerous curve..."
+                currentSpeed +=
+                    20 * elapsed;
 
-                    if progress < 0.5
-
-                    else
-
-                    "Dangerous curve detected — "
-                    "Vehicle slowing and following the right curve."
+                if (
+                    currentSpeed > targetSpeed
                 )
+                    currentSpeed =
+                        targetSpeed;
+            }}
+        }}
 
-            elif data[
-                "behavior"
-            ] == "turn-right":
 
-                status = (
+        speedDisplay.innerText =
+            Math.round(currentSpeed)
+            + ' km/h';
 
-                    "Vehicle approaching turn..."
 
-                    if progress < 0.5
+        position +=
+            currentSpeed
+            * elapsed
+            * 3.0;
 
-                    else
 
-                    "Right turn ahead — Vehicle slowing "
-                    "and taking the right turn."
-                )
+        car.style.left =
+            position + 'px';
 
-            elif data[
-                "behavior"
-            ] == "turn-left":
 
-                status = (
+        if (
+            data.behavior === 'stop'
+            &&
+            position >= 700
+        ) {{
 
-                    "Vehicle approaching turn..."
+            speedDisplay.innerText =
+                '0 km/h';
 
-                    if progress < 0.5
+            car.style.left =
+                '700px';
 
-                    else
+            status.innerText =
+                'STOP detected — Vehicle has stopped.';
 
-                    "Left turn ahead — Vehicle slowing "
-                    "and taking the left turn."
-                )
+            return;
+        }}
 
-            elif data[
-                "behavior"
-            ] == "yield":
 
-                status = (
+        if (
+            data.behavior === 'curve-right'
+            &&
+            position >= 570
+        ) {{
 
-                    "Vehicle approaching YIELD sign..."
+            car.style.bottom =
+                '95px';
 
-                    if progress < 0.5
+            status.innerText =
+                'Dangerous curve detected — Vehicle slowing and following the right curve.';
+        }}
 
-                    else
 
-                    "YIELD detected — Vehicle slowing "
-                    "and continuing carefully."
-                )
+        if (
+            data.behavior === 'turn-right'
+            &&
+            position >= 570
+        ) {{
 
-            else:
+            car.style.bottom =
+                '125px';
 
-                status = (
+            status.innerText =
+                'Right turn ahead — Vehicle slowing and taking the right turn.';
+        }}
 
-                    "Vehicle approaching traffic sign..."
 
-                    if progress < 0.5
+        if (
+            data.behavior === 'turn-left'
+            &&
+            position >= 570
+        ) {{
 
-                    else
+            car.style.bottom =
+                '125px';
 
-                    f"{data['name']} detected — "
-                    "Vehicle reducing speed."
-                )
+            status.innerText =
+                'Left turn ahead — Vehicle slowing and taking the left turn.';
+        }}
 
-            placeholder.markdown(
 
-                f"""
-                ### Road Simulation
+        if (
+            data.behavior !== 'stop'
+            &&
+            position > 1150
+        ) {{
 
-                **{scenario}**
+            status.innerText =
+                data.name
+                + ' handled — Vehicle continues driving.';
 
-                <div style="
-                    width:100%;
-                    height:180px;
-                    background:linear-gradient(
-                        #9ed8ff 0%,
-                        #dff3ff 55%,
-                        #78ad62 55%
-                    );
-                    border-radius:14px;
-                    position:relative;
-                    overflow:hidden;
-                    border:1px solid #ccc;
-                ">
+            return;
+        }}
 
-                    <div style="
-                        position:absolute;
-                        bottom:0;
-                        left:0;
-                        width:100%;
-                        height:65px;
-                        background:#404348;
-                    ">
 
-                        <div style="
-                            position:absolute;
-                            top:30px;
-                            left:0;
-                            width:100%;
-                            border-top:3px dashed white;
-                        "></div>
+        animationFrame =
+            requestAnimationFrame(
+                animate
+            );
+    }}
 
-                    </div>
 
-                    <div style="
-                        position:absolute;
-                        right:12%;
-                        bottom:70px;
-                        font-size:45px;
-                    ">
-                        🛑
-                    </div>
+    animationFrame =
+        requestAnimationFrame(
+            animate
+        );
+}}
 
-                    <div style="
-                        position:absolute;
-                        left:{car_position}%;
-                        bottom:25px;
-                        font-size:45px;
-                        transform:translateX(-50%);
-                    ">
-                        🚗
-                    </div>
 
-                </div>
+startButton.addEventListener(
+    'click',
+    startSimulation
+);
 
-                **Current Vehicle Speed:** {round(current_speed)} km/h
 
-                **Status:** {status}
-                """,
+updateScenario();
 
-                unsafe_allow_html=True
-            )
+</script>
 
-            import time
+</body>
+</html>
+'''
 
-            time.sleep(0.12)
+    return html
 
 
 # ============================================================
-# STREAMLIT INTERFACE
+# MAIN APP UI
 # ============================================================
 
 st.title(
     "Traffic Sign Recognition & Driver Assistance System"
 )
 
-st.write(
-
-    "YOLO11n → Detection → HOG → SVM → "
-    "Recognition → Metadata → Driver Assistance"
+st.caption(
+    "YOLO11n + HOG + SVM + Metadata + Scene Intelligence"
 )
 
-tab1, tab2 = st.tabs(
 
+# ============================================================
+# LOAD MODELS
+# ============================================================
+
+try:
+
+    detector, classifier = load_models()
+
+except Exception as e:
+
+    st.error(
+        "Model loading failed."
+    )
+
+    st.exception(e)
+
+    st.stop()
+
+
+# ============================================================
+# TABS
+# ============================================================
+
+road_tab, sim_tab = st.tabs(
     [
-
         "Road Scene Analysis",
-
         "Driving Assistance Simulation"
     ]
 )
 
 
 # ============================================================
-# TAB 1 — ROAD SCENE
+# ROAD SCENE ANALYSIS
 # ============================================================
 
-with tab1:
+with road_tab:
 
-    st.subheader(
-        "YOLO11n + HOG + SVM"
+    st.markdown(
+        "### Traffic Sign Recognition & Road Scene Analysis"
     )
 
     st.write(
-
-        "Upload a road-scene image containing "
-        "one or more traffic signs."
+        "Upload a road-scene image containing one or more "
+        "traffic signs. The system detects signs, classifies "
+        "them, analyzes their importance and provides "
+        "scene-level driver assistance."
     )
 
-    input_image = st.file_uploader(
-
+    uploaded = st.file_uploader(
         "Upload Road Image",
-
         type=[
-
             "jpg",
-
             "jpeg",
-
             "png"
-        ]
+        ],
+        key="road_image"
     )
 
-    if input_image is not None:
+    if uploaded is not None:
 
         image = Image.open(
-            input_image
+            uploaded
         ).convert("RGB")
 
-        st.image(
-
-            image,
-
-            caption="Input Road Image",
-
-            use_container_width=True
-        )
-
         if st.button(
-
             "Analyze Road Scene",
-
             type="primary"
         ):
 
             with st.spinner(
-
                 "Analyzing road scene..."
             ):
 
-                (
-
-                    annotated,
-
-                    summary,
-
-                    result_table,
-
-                    crop_sheet
-
-                ) = recognize_road_image(
-
-                    image
+                annotated, summary, table, crops = (
+                    recognize_road_image(
+                        image,
+                        detector,
+                        classifier
+                    )
                 )
 
-            st.markdown(
-                "## Detected Traffic Signs"
-            )
-
             st.image(
-
                 annotated,
-
+                caption="Detected Traffic Signs",
                 use_container_width=True
             )
 
             st.markdown(
-
                 "## Road Scene Intelligence"
             )
 
@@ -1909,41 +1948,54 @@ with tab1:
                 summary
             )
 
-            if not result_table.empty:
+            st.markdown(
+                "## Detected Sign Details"
+            )
 
-                st.markdown(
+            if table.empty:
 
-                    "## Detected Sign Details"
+                st.info(
+                    "No detected signs to display."
                 )
 
+            else:
+
                 st.dataframe(
-
-                    result_table,
-
+                    table,
                     use_container_width=True,
-
                     hide_index=True
                 )
 
-            if crop_sheet is not None:
+            st.markdown(
+                "## Individual Sign Analysis"
+            )
 
-                st.markdown(
-
-                    "## Individual Sign Analysis"
-                )
+            if crops is not None:
 
                 st.image(
-
-                    crop_sheet,
-
+                    crops,
+                    caption="Detected Sign Crops",
                     use_container_width=True
                 )
 
 
 # ============================================================
-# TAB 2 — SIMULATION
+# DRIVING ASSISTANCE SIMULATION
 # ============================================================
 
-with tab2:
+with sim_tab:
 
-    simulator()
+    st.markdown(
+        "### Traffic Sign Recognition & Driver Assistance Simulation"
+    )
+
+    st.write(
+        "Multiple scenarios with adjustable starting speed, "
+        "using the same simulation behaviour as the original notebook."
+    )
+
+    components.html(
+        make_simulator_html(),
+        height=720,
+        scrolling=False
+    )
