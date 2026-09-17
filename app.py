@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 import pandas as pd
 import streamlit as st
-import textwrap
+import streamlit.components.v1 as components
 
 from PIL import Image
 from skimage.feature import hog
@@ -1300,79 +1300,110 @@ def simulator():
                 )
 
             # ====================================================
-            # FIXED SIMULATION HTML
+            # SIMULATION VISUAL
             # ====================================================
 
             simulation_html = f"""
-<div style="
-    width:100%;
-    height:180px;
-    background:linear-gradient(
-        #9ed8ff 0%,
-        #dff3ff 55%,
-        #78ad62 55%
-    );
-    border-radius:14px;
-    position:relative;
-    overflow:hidden;
-    border:1px solid #ccc;
-">
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+    body {{
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        overflow: hidden;
+    }}
 
-    <div style="
-        position:absolute;
-        bottom:0;
-        left:0;
-        width:100%;
-        height:65px;
-        background:#404348;
-    ">
+    .scene {{
+        width: 100%;
+        height: 180px;
+        background: linear-gradient(
+            #9ed8ff 0%,
+            #dff3ff 55%,
+            #78ad62 55%
+        );
+        border-radius: 14px;
+        position: relative;
+        overflow: hidden;
+        border: 1px solid #ccc;
+        box-sizing: border-box;
+    }}
 
-        <div style="
-            position:absolute;
-            top:30px;
-            left:0;
-            width:100%;
-            border-top:3px dashed white;
-        "></div>
+    .road {{
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        height: 65px;
+        background: #404348;
+    }}
 
+    .road-line {{
+        position: absolute;
+        top: 30px;
+        left: 0;
+        width: 100%;
+        border-top: 3px dashed white;
+    }}
+
+    .sign {{
+        position: absolute;
+        right: 12%;
+        bottom: 70px;
+        font-size: 45px;
+    }}
+
+    .car {{
+        position: absolute;
+        left: {car_position}%;
+        bottom: 25px;
+        font-size: 45px;
+        transform: translateX(-50%);
+    }}
+</style>
+</head>
+
+<body>
+
+<div class="scene">
+
+    <div class="road">
+        <div class="road-line"></div>
     </div>
 
-    <div style="
-        position:absolute;
-        right:12%;
-        bottom:70px;
-        font-size:45px;
-    ">
-        🛑
-    </div>
+    <div class="sign">🛑</div>
 
-    <div style="
-        position:absolute;
-        left:{car_position}%;
-        bottom:25px;
-        font-size:45px;
-        transform:translateX(-50%);
-    ">
-        🚗
-    </div>
+    <div class="car">🚗</div>
 
 </div>
+
+</body>
+</html>
 """
 
-            placeholder.markdown(
-                f"""
-### Road Simulation
+            with placeholder.container():
 
-**{scenario}**
+                st.markdown("### Road Simulation")
 
-{simulation_html}
+                st.markdown(
+                    f"**{scenario}**"
+                )
 
-**Current Vehicle Speed:** {round(current_speed)} km/h
+                components.html(
+                    simulation_html,
+                    height=190,
+                    scrolling=False
+                )
 
-**Status:** {status}
-""",
-                unsafe_allow_html=True
-            )
+                st.markdown(
+                    f"**Current Vehicle Speed:** "
+                    f"{round(current_speed)} km/h"
+                )
+
+                st.markdown(
+                    f"**Status:** {status}"
+                )
 
             import time
             time.sleep(0.12)
